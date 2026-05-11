@@ -1,0 +1,21 @@
+{
+  "name": "aether-backend-website",
+  "version": "1.0.0",
+  "description": "Standalone web-safe Aether API for the public website.",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/index.js",
+    "start:web": "node src/index.js",
+    "dev": "PORT=3333 node src/index.js",
+    "check": "node --check src/index.js && node --check src/lib/yt-dlp.js && node --check src/lib/lyrics.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@distube/yt-dlp": "^2.0.1",
+    "cors": "^2.8.6",
+    "express": "^5.2.1"
+  }
+}

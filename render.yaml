@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: aether-backend-website
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm run start:web
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: AETHER_WEB_ORIGIN
+        value: https://aetherstudio.me

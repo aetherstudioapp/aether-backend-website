@@ -1,0 +1,182 @@
+const express = require('express');
+const cors = require('cors');
+const { fetchSyncedLyrics } = require('./lib/lyrics');
+const { getMetadata, searchTracks } = require('./lib/yt-dlp');
+
+const app = express();
+const port = Number(process.env.PORT || 3333);
+const version = require('../package.json').version;
+
+const allowedOrigins = new Set([
+  'http://localhost:5173',
+  'http://localhost:4173',
+  'https://aetherstudio.me',
+  'https://www.aetherstudio.me',
+  ...(process.env.AETHER_WEB_ORIGIN || '').split(',').map((origin) => origin.trim()).filter(Boolean),
+]);
+
+app.disable('x-powered-by');
+app.use(express.json({ limit: '1mb' }));
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || allowedOrigins.has(origin)) {
+      callback(null, true);
+      return;
+    }
+    callback(null, false);
+  },
+}));
+
+const queues = new Map();
+const getQueue = (id = 'default') => {
+  const key = String(id || 'default').slice(0, 80);
+  if (!queues.has(key)) {
+    queues.set(key, {
+      songs: [],
+      isPlaying: false,
+      currentMs: 0,
+      seekOffset: 0,
+      lyricOffsetMs: 0,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+  return queues.get(key);
+};
+
+const touchQueue = (queue) => {
+  queue.updatedAt = new Date().toISOString();
+  return queue;
+};
+
+const asyncRoute = (handler) => async (req, res) => {
+  try {
+    await handler(req, res);
+  } catch (error) {
+    console.error(`[Aether API] ${req.method} ${req.path}: ${error.message}`);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Aether API error', message: error.message });
+    }
+  }
+};
+
+app.get('/api/system', (req, res) => {
+  res.json({
+    ok: true,
+    service: 'aether-backend-website',
+    version,
+    time: new Date().toISOString(),
+  });
+});
+
+app.get('/api/search', asyncRoute(async (req, res) => {
+  const results = await searchTracks(req.query.q);
+  res.json(results);
+}));
+
+app.get('/api/metadata', asyncRoute(async (req, res) => {
+  const meta = await getMetadata(req.query.url);
+  if (!meta) {
+    res.status(404).json({ error: 'Metadata not found' });
+    return;
+  }
+  res.json(meta);
+}));
+
+app.get('/api/lyrics', asyncRoute(async (req, res) => {
+  const lyrics = await fetchSyncedLyrics({
+    track: req.query.track || req.query.title || '',
+    artist: req.query.artist || req.query.author || '',
+    duration: req.query.duration || 0,
+  });
+  res.json(lyrics);
+}));
+
+app.get('/api/proxy', asyncRoute(async (req, res) => {
+  const rawUrl = String(req.query.url || '');
+  if (!rawUrl) {
+    res.status(400).send('Missing url');
+    return;
+  }
+
+  const target = rawUrl.startsWith('//') ? `https:${rawUrl}` : rawUrl;
+  const parsed = new URL(target);
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    res.status(400).send('Unsupported protocol');
+    return;
+  }
+
+  const response = await fetch(parsed.toString(), {
+    redirect: 'follow',
+    headers: {
+      accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+      'user-agent': 'Aether Website Backend',
+    },
+  });
+
+  if (!response.ok) {
+    res.status(response.status).send('Proxy fetch failed');
+    return;
+  }
+
+  const contentType = response.headers.get('content-type') || 'application/octet-stream';
+  res.setHeader('content-type', contentType);
+  res.setHeader('cache-control', 'public, max-age=86400, stale-while-revalidate=604800');
+  const bytes = Buffer.from(await response.arrayBuffer());
+  res.send(bytes);
+}));
+
+app.get('/api/queue/:id', (req, res) => {
+  res.json(getQueue(req.params.id));
+});
+
+app.post('/api/add/:id', (req, res) => {
+  const queue = getQueue(req.params.id);
+  const track = req.body?.track;
+  if (!track || typeof track !== 'object') {
+    res.status(400).json({ success: false, error: 'Missing track' });
+    return;
+  }
+  queue.songs.push(track);
+  touchQueue(queue);
+  res.json({ success: true, position: queue.songs.length - 1, queue });
+});
+
+app.post('/api/control/:id', (req, res) => {
+  const queue = getQueue(req.params.id);
+  const { action, time } = req.body || {};
+
+  if (action === 'pause') queue.isPlaying = false;
+  if (action === 'resume' || action === 'play') queue.isPlaying = true;
+  if (action === 'seek') queue.seekOffset = Math.max(0, Number(time) || 0);
+  if (action === 'skip') {
+    queue.songs.shift();
+    queue.seekOffset = 0;
+    queue.currentMs = 0;
+    if (queue.songs.length === 0) queue.isPlaying = false;
+  }
+  if (action === 'shuffle' && queue.songs.length > 1) {
+    for (let i = queue.songs.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [queue.songs[i], queue.songs[j]] = [queue.songs[j], queue.songs[i]];
+    }
+  }
+
+  touchQueue(queue);
+  res.json({ success: true, queue });
+});
+
+app.post('/api/heartbeat/:id', (req, res) => {
+  const queue = getQueue(req.params.id);
+  queue.currentMs = Math.max(0, Number(req.body?.currentTime) || Number(req.body?.currentMs) || 0);
+  if (typeof req.body?.isPlaying === 'boolean') queue.isPlaying = req.body.isPlaying;
+  touchQueue(queue);
+  res.json({ success: true, queue });
+});
+
+app.use((req, res) => {
+  res.status(404).json({ error: 'Not found' });
+});
+
+app.listen(port, () => {
+  console.log(`[Aether API] running on port ${port}`);
+});
