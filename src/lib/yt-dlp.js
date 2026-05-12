@@ -59,6 +59,26 @@ const normalizeJsonCookie = (cookie) => {
   ].join('\t');
 };
 
+const collectJsonCookies = (value, out = []) => {
+  if (!value || typeof value !== 'object') return out;
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectJsonCookies(item, out));
+    return out;
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(value, 'name')
+    && Object.prototype.hasOwnProperty.call(value, 'value')
+    && (value.domain || value.host || value.url || value.path)
+  ) {
+    out.push(value);
+    return out;
+  }
+
+  Object.values(value).forEach((item) => collectJsonCookies(item, out));
+  return out;
+};
+
 const cookiesJsonToNetscape = (cookieText) => {
   let parsed;
   try {
@@ -67,13 +87,7 @@ const cookiesJsonToNetscape = (cookieText) => {
     return null;
   }
 
-  const list = Array.isArray(parsed)
-    ? parsed
-    : Array.isArray(parsed?.cookies)
-      ? parsed.cookies
-      : Array.isArray(parsed?.data)
-        ? parsed.data
-        : [];
+  const list = collectJsonCookies(parsed);
   const lines = list.map(normalizeJsonCookie).filter(Boolean);
   if (lines.length === 0) return null;
 
@@ -95,7 +109,11 @@ const prepareCookieText = (cookieText) => {
     console.log('[Aether API] converted JSON YouTube cookies to Netscape format');
     return converted;
   }
-  console.warn('[Aether API] YouTube cookies env var is present, but did not look like Netscape or supported JSON cookies');
+  if (normalized.startsWith('{') || normalized.startsWith('[')) {
+    console.warn('[Aether API] YouTube cookies env var is JSON, but no cookie entries were found; ignoring it');
+    return '';
+  }
+  console.warn('[Aether API] YouTube cookies env var is present, but did not look like Netscape cookies');
   return normalized;
 };
 
