@@ -84,6 +84,7 @@ app.get('/api/diagnostics', asyncRoute(async (req, res) => {
     version,
     commit,
     ytdlpPath,
+    youtubeDataApiConfigured: Boolean(process.env.YOUTUBE_DATA_API_KEY),
     cookies: getCookieStatus(),
     time: new Date().toISOString(),
   });

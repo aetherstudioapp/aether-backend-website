@@ -5,6 +5,7 @@ const { spawn } = require('child_process');
 
 const SEARCH_TIMEOUT_MS = 15000;
 const METADATA_TIMEOUT_MS = 18000;
+const YOUTUBE_API_BASE = 'https://www.googleapis.com/youtube/v3';
 
 const ytDlpPackageRoot = () => {
   const entryPath = require.resolve('@distube/yt-dlp');
@@ -241,9 +242,95 @@ const normalizeTrack = (data) => {
   };
 };
 
+const parseIsoDurationMs = (value) => {
+  const match = String(value || '').match(/^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/);
+  if (!match) return 0;
+  const hours = Number(match[1] || 0);
+  const minutes = Number(match[2] || 0);
+  const seconds = Number(match[3] || 0);
+  return Math.max(0, ((hours * 3600) + (minutes * 60) + seconds) * 1000);
+};
+
+const normalizeYouTubeApiTrack = (item) => {
+  const id = String(item?.id || '').trim();
+  const title = String(item?.snippet?.title || '').trim();
+  if (!id || !title) return null;
+  const durationMs = parseIsoDurationMs(item?.contentDetails?.duration);
+  const thumbnail =
+    item?.snippet?.thumbnails?.maxres?.url
+    || item?.snippet?.thumbnails?.standard?.url
+    || item?.snippet?.thumbnails?.high?.url
+    || item?.snippet?.thumbnails?.medium?.url
+    || item?.snippet?.thumbnails?.default?.url
+    || '';
+  const url = `https://www.youtube.com/watch?v=${id}`;
+  return {
+    id,
+    youtubeId: id,
+    title,
+    author: String(item?.snippet?.channelTitle || 'YouTube').trim(),
+    duration: durationMs,
+    totalDurationMs: durationMs,
+    url,
+    actualUrl: url,
+    thumbnail,
+  };
+};
+
+const youtubeApiFetch = async (pathname, params) => {
+  const key = String(process.env.YOUTUBE_DATA_API_KEY || '').trim();
+  if (!key) return null;
+  const url = new URL(`${YOUTUBE_API_BASE}/${pathname}`);
+  Object.entries({ ...params, key }).forEach(([name, value]) => {
+    if (value !== undefined && value !== null && value !== '') url.searchParams.set(name, String(value));
+  });
+  const response = await fetch(url);
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(`YouTube Data API ${response.status}: ${text.slice(0, 220) || response.statusText}`);
+  }
+  return response.json();
+};
+
+const searchTracksWithYouTubeApi = async (query) => {
+  const q = String(query || '').trim();
+  if (!q || !process.env.YOUTUBE_DATA_API_KEY) return [];
+
+  const searchPayload = await youtubeApiFetch('search', {
+    part: 'snippet',
+    type: 'video',
+    videoCategoryId: '10',
+    maxResults: '20',
+    safeSearch: 'none',
+    q,
+  });
+  const ids = (searchPayload?.items || [])
+    .map((item) => item?.id?.videoId)
+    .filter(Boolean)
+    .slice(0, 20);
+  if (!ids.length) return [];
+
+  const videoPayload = await youtubeApiFetch('videos', {
+    part: 'snippet,contentDetails',
+    id: ids.join(','),
+    maxResults: '20',
+  });
+
+  return (videoPayload?.items || [])
+    .map(normalizeYouTubeApiTrack)
+    .filter(Boolean);
+};
+
 const searchTracks = async (query) => {
   const q = String(query || '').trim();
   if (!q) return [];
+
+  try {
+    const apiResults = await searchTracksWithYouTubeApi(q);
+    if (apiResults.length) return apiResults;
+  } catch (error) {
+    console.warn(`[Aether API] YouTube Data API search failed for "${q.slice(0, 80)}": ${error.message}`);
+  }
 
   let stdout = '';
   const cookieArgs = getCookieArgs();
@@ -318,4 +405,5 @@ module.exports = {
   getCookieStatus,
   getMetadata,
   searchTracks,
+  searchTracksWithYouTubeApi,
 };
