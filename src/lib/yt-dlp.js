@@ -146,6 +146,28 @@ const getCookieArgs = () => {
   return cookiesPath ? ['--cookies', cookiesPath] : [];
 };
 
+const getCookieStatus = () => {
+  const cookiesPath = resolveCookieFilePath();
+  if (!cookiesPath) {
+    return { present: false, path: null, lineCount: 0, names: [] };
+  }
+  const text = fs.readFileSync(cookiesPath, 'utf8');
+  const names = text
+    .split('\n')
+    .filter((line) => line.trim() && !line.startsWith('#'))
+    .map((line) => line.split('\t')[5])
+    .filter(Boolean);
+  return {
+    present: true,
+    path: cookiesPath,
+    lineCount: names.length,
+    names: Array.from(new Set(names)).slice(0, 24),
+    hasLoginInfo: names.includes('LOGIN_INFO'),
+    hasSid: names.includes('SID') || names.includes('__Secure-1PSID') || names.includes('__Secure-3PSID'),
+    hasSapSid: names.includes('SAPISID') || names.includes('__Secure-1PAPISID') || names.includes('__Secure-3PAPISID'),
+  };
+};
+
 const ensureYtDlp = async () => {
   if (ensurePromise) return ensurePromise;
   ensurePromise = (async () => {
@@ -232,9 +254,11 @@ const searchTracks = async (query) => {
       stdout = await runYtDlpLines([
         `ytsearch20:${q}`,
         ...attempts[index],
-        '--dump-json',
-        '--flat-playlist',
-        '--no-check-certificates',
+      '--dump-json',
+      '--flat-playlist',
+      '--socket-timeout',
+      '8',
+      '--no-check-certificates',
         '--no-warnings',
         '--skip-download',
       ], SEARCH_TIMEOUT_MS);
@@ -271,6 +295,8 @@ const getMetadata = async (url) => {
         target,
         ...attempts[index],
         '--dump-json',
+        '--socket-timeout',
+        '8',
         '--no-check-certificates',
         '--no-warnings',
         '--skip-download',
@@ -289,6 +315,7 @@ const getMetadata = async (url) => {
 module.exports = {
   ensureYtDlp,
   getCookieArgs,
+  getCookieStatus,
   getMetadata,
   searchTracks,
 };

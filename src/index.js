@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const { spawn } = require('child_process');
 const { fetchSyncedLyrics } = require('./lib/lyrics');
-const { ensureYtDlp, getCookieArgs, getMetadata, searchTracks } = require('./lib/yt-dlp');
+const { ensureYtDlp, getCookieArgs, getCookieStatus, getMetadata, searchTracks } = require('./lib/yt-dlp');
 
 const app = express();
 const port = Number(process.env.PORT || 3333);
@@ -75,6 +75,19 @@ app.get('/api/system', (req, res) => {
     time: new Date().toISOString(),
   });
 });
+
+app.get('/api/diagnostics', asyncRoute(async (req, res) => {
+  const ytdlpPath = await ensureYtDlp();
+  res.json({
+    ok: true,
+    service: 'aether-backend-website',
+    version,
+    commit,
+    ytdlpPath,
+    cookies: getCookieStatus(),
+    time: new Date().toISOString(),
+  });
+}));
 
 app.get('/api/search', asyncRoute(async (req, res) => {
   const results = await searchTracks(req.query.q);
@@ -157,6 +170,8 @@ app.get('/stream', asyncRoute(async (req, res) => {
       '--output',
       '-',
       '--force-overwrites',
+      '--socket-timeout',
+      '8',
       '--no-check-certificates',
       '--no-warnings',
     ], { stdio: ['ignore', 'pipe', 'pipe'] });
