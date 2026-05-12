@@ -224,19 +224,26 @@ const searchTracks = async (query) => {
   if (!q) return [];
 
   let stdout = '';
-  try {
-    stdout = await runYtDlpLines([
-      `ytsearch20:${q}`,
-      ...getCookieArgs(),
-      '--dump-json',
-      '--flat-playlist',
-      '--no-check-certificates',
-      '--no-warnings',
-      '--skip-download',
-    ], SEARCH_TIMEOUT_MS);
-  } catch (error) {
-    console.warn(`[Aether API] search failed for "${q.slice(0, 80)}": ${error.message}`);
-    return [];
+  const cookieArgs = getCookieArgs();
+  const attempts = cookieArgs.length ? [cookieArgs, []] : [[]];
+
+  for (let index = 0; index < attempts.length; index += 1) {
+    try {
+      stdout = await runYtDlpLines([
+        `ytsearch20:${q}`,
+        ...attempts[index],
+        '--dump-json',
+        '--flat-playlist',
+        '--no-check-certificates',
+        '--no-warnings',
+        '--skip-download',
+      ], SEARCH_TIMEOUT_MS);
+      break;
+    } catch (error) {
+      const label = attempts[index].length ? 'with cookies' : 'without cookies';
+      console.warn(`[Aether API] search failed ${label} for "${q.slice(0, 80)}": ${error.message}`);
+      if (index === attempts.length - 1) return [];
+    }
   }
 
   return stdout
@@ -255,18 +262,25 @@ const getMetadata = async (url) => {
   if (!target) return null;
 
   let stdout = '';
-  try {
-    stdout = await runYtDlpLines([
-      target,
-      ...getCookieArgs(),
-      '--dump-json',
-      '--no-check-certificates',
-      '--no-warnings',
-      '--skip-download',
-    ], METADATA_TIMEOUT_MS);
-  } catch (error) {
-    console.warn(`[Aether API] metadata failed for "${target.slice(0, 120)}": ${error.message}`);
-    return null;
+  const cookieArgs = getCookieArgs();
+  const attempts = cookieArgs.length ? [cookieArgs, []] : [[]];
+
+  for (let index = 0; index < attempts.length; index += 1) {
+    try {
+      stdout = await runYtDlpLines([
+        target,
+        ...attempts[index],
+        '--dump-json',
+        '--no-check-certificates',
+        '--no-warnings',
+        '--skip-download',
+      ], METADATA_TIMEOUT_MS);
+      break;
+    } catch (error) {
+      const label = attempts[index].length ? 'with cookies' : 'without cookies';
+      console.warn(`[Aether API] metadata failed ${label} for "${target.slice(0, 120)}": ${error.message}`);
+      if (index === attempts.length - 1) return null;
+    }
   }
 
   return normalizeTrack(JSON.parse(stdout));

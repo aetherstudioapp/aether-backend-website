@@ -113,23 +113,28 @@ app.get('/stream', asyncRoute(async (req, res) => {
 
   const ytdlpPath = await ensureYtDlp();
   const startedAt = Date.now();
-  const child = spawn(ytdlpPath, [
-    parsed.toString(),
-    ...getCookieArgs(),
-    '--format',
-    STREAM_FORMAT,
-    '--output',
-    '-',
-    '--force-overwrites',
-    '--no-check-certificates',
-    '--no-warnings',
-  ], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const cookieArgs = getCookieArgs();
+  const baseAttempts = [
+    { label: 'default', cookieArgs, extractorArgs: [] },
+    { label: 'web-client', cookieArgs, extractorArgs: ['--extractor-args', 'youtube:player_client=web'] },
+    { label: 'android-client', cookieArgs, extractorArgs: ['--extractor-args', 'youtube:player_client=android'] },
+    { label: 'ios-client', cookieArgs, extractorArgs: ['--extractor-args', 'youtube:player_client=ios'] },
+    { label: 'anonymous-default', cookieArgs: [], extractorArgs: [] },
+    { label: 'anonymous-web-client', cookieArgs: [], extractorArgs: ['--extractor-args', 'youtube:player_client=web'] },
+    { label: 'anonymous-android-client', cookieArgs: [], extractorArgs: ['--extractor-args', 'youtube:player_client=android'] },
+  ];
+  const attempts = baseAttempts.filter((attempt, index) => {
+    if (cookieArgs.length === 0 && attempt.label.startsWith('anonymous-')) return index >= 4;
+    return true;
+  });
 
-  let stderr = '';
   let responded = false;
+  let activeChild = null;
+  let requestClosed = false;
   const closeChild = () => {
-    if (!child.killed) {
-      try { child.kill('SIGKILL'); } catch {}
+    requestClosed = true;
+    if (activeChild && !activeChild.killed) {
+      try { activeChild.kill('SIGKILL'); } catch {}
     }
   };
 
@@ -138,33 +143,66 @@ app.get('/stream', asyncRoute(async (req, res) => {
   res.setHeader('X-Accel-Buffering', 'no');
 
   req.on('close', closeChild);
-  child.stderr.on('data', (chunk) => {
-    stderr += chunk.toString();
-    if (stderr.length > 4000) stderr = stderr.slice(-4000);
-  });
-  child.stdout.on('data', (chunk) => {
-    if (!responded) {
-      responded = true;
-      console.log(`[Aether API] stream started in ${Date.now() - startedAt}ms`);
-    }
-    res.write(chunk);
-  });
-  child.on('error', (error) => {
-    console.warn(`[Aether API] stream spawn failed: ${error.message}`);
-    if (!res.headersSent) res.status(503).send('Streaming backend unavailable');
-    else res.end();
-  });
-  child.on('close', (code) => {
-    req.off('close', closeChild);
-    if (code !== 0 && !responded) {
-      const message = stderr.trim() || `yt-dlp exited with code ${code}`;
-      console.warn(`[Aether API] stream failed: ${message}`);
-      if (!res.headersSent) res.status(502).send(message);
+
+  const runAttempt = (attemptIndex) => {
+    if (requestClosed || res.destroyed) return;
+    const attempt = attempts[attemptIndex];
+    let stderr = '';
+    const child = spawn(ytdlpPath, [
+      parsed.toString(),
+      ...attempt.cookieArgs,
+      ...attempt.extractorArgs,
+      '--format',
+      STREAM_FORMAT,
+      '--output',
+      '-',
+      '--force-overwrites',
+      '--no-check-certificates',
+      '--no-warnings',
+    ], { stdio: ['ignore', 'pipe', 'pipe'] });
+    activeChild = child;
+
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+      if (stderr.length > 5000) stderr = stderr.slice(-5000);
+    });
+    child.stdout.on('data', (chunk) => {
+      if (!responded) {
+        responded = true;
+        console.log(`[Aether API] stream started via ${attempt.label} in ${Date.now() - startedAt}ms`);
+      }
+      res.write(chunk);
+    });
+    child.on('error', (error) => {
+      const message = error.message || 'stream spawn failed';
+      console.warn(`[Aether API] stream attempt ${attempt.label} failed: ${message}`);
+      if (!responded && attemptIndex < attempts.length - 1) {
+        runAttempt(attemptIndex + 1);
+        return;
+      }
+      if (!res.headersSent) res.status(503).send('Streaming backend unavailable');
       else res.end();
-      return;
-    }
-    res.end();
-  });
+    });
+    child.on('close', (code) => {
+      if (requestClosed) return;
+      if (code !== 0 && !responded) {
+        const message = stderr.trim() || `yt-dlp exited with code ${code}`;
+        console.warn(`[Aether API] stream attempt ${attempt.label} failed: ${message}`);
+        if (attemptIndex < attempts.length - 1) {
+          runAttempt(attemptIndex + 1);
+          return;
+        }
+        req.off('close', closeChild);
+        if (!res.headersSent) res.status(502).send(message);
+        else res.end();
+        return;
+      }
+      req.off('close', closeChild);
+      res.end();
+    });
+  };
+
+  runAttempt(0);
 }));
 
 app.get('/api/lyrics', asyncRoute(async (req, res) => {
