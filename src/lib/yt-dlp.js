@@ -5,10 +5,14 @@ const { spawn } = require('child_process');
 const SEARCH_TIMEOUT_MS = 15000;
 const METADATA_TIMEOUT_MS = 18000;
 
+const ytDlpPackageRoot = () => {
+  const entryPath = require.resolve('@distube/yt-dlp');
+  return path.resolve(path.dirname(entryPath), '..');
+};
+
 const packagedYtDlpPath = () => {
-  const pkgPath = require.resolve('@distube/yt-dlp/package.json');
   const fileName = process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp';
-  return path.join(path.dirname(pkgPath), 'bin', fileName);
+  return path.join(ytDlpPackageRoot(), 'bin', fileName);
 };
 
 const resolveYtDlpPath = () => {
@@ -97,14 +101,20 @@ const searchTracks = async (query) => {
   const q = String(query || '').trim();
   if (!q) return [];
 
-  const stdout = await runYtDlpLines([
-    `ytsearch20:${q}`,
-    '--dump-json',
-    '--flat-playlist',
-    '--no-check-certificates',
-    '--no-warnings',
-    '--skip-download',
-  ], SEARCH_TIMEOUT_MS);
+  let stdout = '';
+  try {
+    stdout = await runYtDlpLines([
+      `ytsearch20:${q}`,
+      '--dump-json',
+      '--flat-playlist',
+      '--no-check-certificates',
+      '--no-warnings',
+      '--skip-download',
+    ], SEARCH_TIMEOUT_MS);
+  } catch (error) {
+    console.warn(`[Aether API] search failed for "${q.slice(0, 80)}": ${error.message}`);
+    return [];
+  }
 
   return stdout
     .split('\n')
@@ -121,13 +131,19 @@ const getMetadata = async (url) => {
   const target = String(url || '').trim();
   if (!target) return null;
 
-  const stdout = await runYtDlpLines([
-    target,
-    '--dump-json',
-    '--no-check-certificates',
-    '--no-warnings',
-    '--skip-download',
-  ], METADATA_TIMEOUT_MS);
+  let stdout = '';
+  try {
+    stdout = await runYtDlpLines([
+      target,
+      '--dump-json',
+      '--no-check-certificates',
+      '--no-warnings',
+      '--skip-download',
+    ], METADATA_TIMEOUT_MS);
+  } catch (error) {
+    console.warn(`[Aether API] metadata failed for "${target.slice(0, 120)}": ${error.message}`);
+    return null;
+  }
 
   return normalizeTrack(JSON.parse(stdout));
 };
