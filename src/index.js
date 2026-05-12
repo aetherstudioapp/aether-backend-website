@@ -293,6 +293,12 @@ app.post('/api/control/:id', (req, res) => {
     queue.currentMs = 0;
     if (queue.songs.length === 0) queue.isPlaying = false;
   }
+  if (action === 'clear' || action === 'stop') {
+    queue.songs = [];
+    queue.seekOffset = 0;
+    queue.currentMs = 0;
+    queue.isPlaying = false;
+  }
   if (action === 'shuffle' && queue.songs.length > 1) {
     for (let i = queue.songs.length - 1; i > 0; i -= 1) {
       const j = Math.floor(Math.random() * (i + 1));
@@ -306,8 +312,14 @@ app.post('/api/control/:id', (req, res) => {
 
 app.post('/api/heartbeat/:id', (req, res) => {
   const queue = getQueue(req.params.id);
-  queue.currentMs = Math.max(0, Number(req.body?.currentTime) || Number(req.body?.currentMs) || 0);
-  if (typeof req.body?.isPlaying === 'boolean') queue.isPlaying = req.body.isPlaying;
+  if (queue.songs.length === 0) {
+    queue.currentMs = 0;
+    queue.seekOffset = 0;
+    queue.isPlaying = false;
+  } else {
+    queue.currentMs = Math.max(0, Number(req.body?.currentTime) || Number(req.body?.currentMs) || 0);
+    if (typeof req.body?.isPlaying === 'boolean') queue.isPlaying = req.body.isPlaying;
+  }
   touchQueue(queue);
   res.json({ success: true, queue });
 });
