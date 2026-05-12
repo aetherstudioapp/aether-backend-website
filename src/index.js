@@ -50,6 +50,10 @@ const touchQueue = (queue) => {
   return queue;
 };
 
+const STREAM_FORMAT =
+  process.env.YTDLP_STREAM_FORMAT
+  || 'ba[ext=m4a]/ba[ext=webm]/ba/bestaudio[acodec!=none]/best[acodec!=none]/best';
+
 const asyncRoute = (handler) => async (req, res) => {
   try {
     await handler(req, res);
@@ -113,9 +117,10 @@ app.get('/stream', asyncRoute(async (req, res) => {
     parsed.toString(),
     ...getCookieArgs(),
     '--format',
-    'bestaudio[ext=m4a]/bestaudio/best',
+    STREAM_FORMAT,
     '--output',
     '-',
+    '--force-overwrites',
     '--no-check-certificates',
     '--no-warnings',
   ], { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -128,7 +133,7 @@ app.get('/stream', asyncRoute(async (req, res) => {
     }
   };
 
-  res.setHeader('Content-Type', 'audio/mp4');
+  res.setHeader('Content-Type', 'application/octet-stream');
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('X-Accel-Buffering', 'no');
 
