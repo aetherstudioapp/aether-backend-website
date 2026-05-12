@@ -1,4 +1,5 @@
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 
@@ -23,6 +24,32 @@ const resolveYtDlpPath = () => {
 };
 
 let ensurePromise = null;
+let cookieFilePath = null;
+
+const normalizeCookieText = (value) => String(value || '').replace(/\r\n/g, '\n').trim();
+
+const resolveCookieFilePath = () => {
+  if (cookieFilePath) return cookieFilePath;
+  if (process.env.YOUTUBE_COOKIES_PATH && fs.existsSync(process.env.YOUTUBE_COOKIES_PATH)) {
+    cookieFilePath = process.env.YOUTUBE_COOKIES_PATH;
+    return cookieFilePath;
+  }
+
+  const rawCookieText = process.env.YOUTUBE_COOKIES_BASE64
+    ? Buffer.from(process.env.YOUTUBE_COOKIES_BASE64, 'base64').toString('utf8')
+    : process.env.YOUTUBE_COOKIES;
+  const cookieText = normalizeCookieText(rawCookieText);
+  if (!cookieText) return null;
+
+  cookieFilePath = path.join(os.tmpdir(), 'aether-youtube-cookies.txt');
+  fs.writeFileSync(cookieFilePath, `${cookieText}\n`, { mode: 0o600 });
+  return cookieFilePath;
+};
+
+const getCookieArgs = () => {
+  const cookiesPath = resolveCookieFilePath();
+  return cookiesPath ? ['--cookies', cookiesPath] : [];
+};
 
 const ensureYtDlp = async () => {
   if (ensurePromise) return ensurePromise;
@@ -105,6 +132,7 @@ const searchTracks = async (query) => {
   try {
     stdout = await runYtDlpLines([
       `ytsearch20:${q}`,
+      ...getCookieArgs(),
       '--dump-json',
       '--flat-playlist',
       '--no-check-certificates',
@@ -135,6 +163,7 @@ const getMetadata = async (url) => {
   try {
     stdout = await runYtDlpLines([
       target,
+      ...getCookieArgs(),
       '--dump-json',
       '--no-check-certificates',
       '--no-warnings',
@@ -150,6 +179,7 @@ const getMetadata = async (url) => {
 
 module.exports = {
   ensureYtDlp,
+  getCookieArgs,
   getMetadata,
   searchTracks,
 };

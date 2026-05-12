@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const { spawn } = require('child_process');
 const { fetchSyncedLyrics } = require('./lib/lyrics');
-const { ensureYtDlp, getMetadata, searchTracks } = require('./lib/yt-dlp');
+const { ensureYtDlp, getCookieArgs, getMetadata, searchTracks } = require('./lib/yt-dlp');
 
 const app = express();
 const port = Number(process.env.PORT || 3333);
@@ -111,6 +111,7 @@ app.get('/stream', asyncRoute(async (req, res) => {
   const startedAt = Date.now();
   const child = spawn(ytdlpPath, [
     parsed.toString(),
+    ...getCookieArgs(),
     '--format',
     'bestaudio[ext=m4a]/bestaudio/best',
     '--output',
