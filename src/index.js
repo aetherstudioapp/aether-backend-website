@@ -6,6 +6,7 @@ const { getMetadata, searchTracks } = require('./lib/yt-dlp');
 const app = express();
 const port = Number(process.env.PORT || 3333);
 const version = require('../package.json').version;
+const commit = process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || 'local';
 
 const allowedOrigins = new Set([
   'http://localhost:5173',
@@ -64,6 +65,8 @@ app.get('/api/system', (req, res) => {
     ok: true,
     service: 'aether-backend-website',
     version,
+    commit,
+    instance: process.env.RENDER_SERVICE_NAME || 'local',
     time: new Date().toISOString(),
   });
 });
