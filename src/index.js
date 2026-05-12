@@ -1,7 +1,8 @@
 const express = require('express');
 const cors = require('cors');
+const { spawn } = require('child_process');
 const { fetchSyncedLyrics } = require('./lib/lyrics');
-const { getMetadata, searchTracks } = require('./lib/yt-dlp');
+const { ensureYtDlp, getMetadata, searchTracks } = require('./lib/yt-dlp');
 
 const app = express();
 const port = Number(process.env.PORT || 3333);
@@ -83,6 +84,81 @@ app.get('/api/metadata', asyncRoute(async (req, res) => {
     return;
   }
   res.json(meta);
+}));
+
+app.get('/stream', asyncRoute(async (req, res) => {
+  const rawUrl = String(req.query.url || '');
+  if (!rawUrl) {
+    res.status(400).send('Missing url');
+    return;
+  }
+
+  const target = rawUrl.startsWith('//') ? `https:${rawUrl}` : rawUrl;
+  let parsed;
+  try {
+    parsed = new URL(target);
+  } catch {
+    res.status(400).send('Invalid url');
+    return;
+  }
+
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    res.status(400).send('Unsupported protocol');
+    return;
+  }
+
+  const ytdlpPath = await ensureYtDlp();
+  const startedAt = Date.now();
+  const child = spawn(ytdlpPath, [
+    parsed.toString(),
+    '--format',
+    'bestaudio[ext=m4a]/bestaudio/best',
+    '--output',
+    '-',
+    '--no-check-certificates',
+    '--no-warnings',
+  ], { stdio: ['ignore', 'pipe', 'pipe'] });
+
+  let stderr = '';
+  let responded = false;
+  const closeChild = () => {
+    if (!child.killed) {
+      try { child.kill('SIGKILL'); } catch {}
+    }
+  };
+
+  res.setHeader('Content-Type', 'audio/mp4');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Accel-Buffering', 'no');
+
+  req.on('close', closeChild);
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk.toString();
+    if (stderr.length > 4000) stderr = stderr.slice(-4000);
+  });
+  child.stdout.on('data', (chunk) => {
+    if (!responded) {
+      responded = true;
+      console.log(`[Aether API] stream started in ${Date.now() - startedAt}ms`);
+    }
+    res.write(chunk);
+  });
+  child.on('error', (error) => {
+    console.warn(`[Aether API] stream spawn failed: ${error.message}`);
+    if (!res.headersSent) res.status(503).send('Streaming backend unavailable');
+    else res.end();
+  });
+  child.on('close', (code) => {
+    req.off('close', closeChild);
+    if (code !== 0 && !responded) {
+      const message = stderr.trim() || `yt-dlp exited with code ${code}`;
+      console.warn(`[Aether API] stream failed: ${message}`);
+      if (!res.headersSent) res.status(502).send(message);
+      else res.end();
+      return;
+    }
+    res.end();
+  });
 }));
 
 app.get('/api/lyrics', asyncRoute(async (req, res) => {
