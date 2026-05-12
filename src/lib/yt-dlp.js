@@ -26,7 +26,7 @@ const resolveYtDlpPath = () => {
 let ensurePromise = null;
 let cookieFilePath = null;
 
-const normalizeCookieText = (value) => String(value || '').replace(/\r\n/g, '\n').trim();
+const normalizeCookieText = (value) => String(value || '').replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').trim();
 
 const boolToCookieFlag = (value) => (value ? 'TRUE' : 'FALSE');
 
@@ -37,15 +37,15 @@ const domainFromCookie = (cookie) => {
 };
 
 const normalizeJsonCookie = (cookie) => {
-  const name = String(cookie?.name || '').trim();
-  const value = String(cookie?.value || '');
+  const name = String(cookie?.name || cookie?.Name || '').trim();
+  const value = String(cookie?.value ?? cookie?.Value ?? '');
   if (!name) return null;
 
   const domain = domainFromCookie(cookie);
   const includeSubdomains = domain.startsWith('.');
-  const pathValue = String(cookie?.path || '/');
-  const secure = Boolean(cookie?.secure);
-  const expiresRaw = cookie?.expirationDate ?? cookie?.expires ?? cookie?.expiry ?? 0;
+  const pathValue = String(cookie?.path || cookie?.Path || '/');
+  const secure = Boolean(cookie?.secure ?? cookie?.Secure);
+  const expiresRaw = cookie?.expirationDate ?? cookie?.expires ?? cookie?.expiry ?? cookie?.ExpirationDate ?? cookie?.Expires ?? 0;
   const expires = Number.isFinite(Number(expiresRaw)) ? Math.trunc(Number(expiresRaw)) : 0;
 
   return [
@@ -67,9 +67,9 @@ const collectJsonCookies = (value, out = []) => {
   }
 
   if (
-    Object.prototype.hasOwnProperty.call(value, 'name')
-    && Object.prototype.hasOwnProperty.call(value, 'value')
-    && (value.domain || value.host || value.url || value.path)
+    (Object.prototype.hasOwnProperty.call(value, 'name') || Object.prototype.hasOwnProperty.call(value, 'Name'))
+    && (Object.prototype.hasOwnProperty.call(value, 'value') || Object.prototype.hasOwnProperty.call(value, 'Value'))
+    && (value.domain || value.host || value.url || value.path || value.Domain || value.Host || value.Url || value.Path)
   ) {
     out.push(value);
     return out;
@@ -87,6 +87,10 @@ const cookiesJsonToNetscape = (cookieText) => {
     return null;
   }
 
+  if (typeof parsed === 'string') {
+    return cookiesJsonToNetscape(parsed);
+  }
+
   const list = collectJsonCookies(parsed);
   const lines = list.map(normalizeJsonCookie).filter(Boolean);
   if (lines.length === 0) return null;
@@ -101,17 +105,19 @@ const cookiesJsonToNetscape = (cookieText) => {
 const prepareCookieText = (cookieText) => {
   const normalized = normalizeCookieText(cookieText);
   if (!normalized) return '';
-  if (normalized.startsWith('# Netscape HTTP Cookie File') || normalized.includes('\t')) {
-    return normalized;
-  }
-  const converted = cookiesJsonToNetscape(normalized);
+  const jsonStart = normalized.search(/[\[{"]/);
+  const maybeJson = jsonStart >= 0 ? normalized.slice(jsonStart).trim() : normalized;
+  const converted = cookiesJsonToNetscape(maybeJson);
   if (converted) {
     console.log('[Aether API] converted JSON YouTube cookies to Netscape format');
     return converted;
   }
-  if (normalized.startsWith('{') || normalized.startsWith('[')) {
-    console.warn('[Aether API] YouTube cookies env var is JSON, but no cookie entries were found; ignoring it');
+  if (maybeJson.startsWith('{') || maybeJson.startsWith('[') || maybeJson.startsWith('"')) {
+    console.warn('[Aether API] YouTube cookies env var is JSON, but no supported cookie entries were found; ignoring it');
     return '';
+  }
+  if (normalized.startsWith('# Netscape HTTP Cookie File') || normalized.includes('\t')) {
+    return normalized;
   }
   console.warn('[Aether API] YouTube cookies env var is present, but did not look like Netscape cookies');
   return normalized;
